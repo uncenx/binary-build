@@ -23,7 +23,7 @@ APP_DIR="/opt/server-scraper"
 SERVICE_NAME="server-scraper"
 
 # Environment Variables Configuration
-ENV_DATABASE_URL="mongodb+srv://admin:[password]/dbname"
+DATABASE_URL="mongodb+srv://admin:[password]/dbname"
 URL_BASE="https://raw.githubusercontent.com/uncenx/binary-build/refs/heads/master/server-scraper"
 
 # Parse arguments
@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --uninstall        Uninstall Server Scraper completely"
             echo "  -n, --count NUM    Number of worker instances (default: 1)"
-            echo "  -db, --database    MongoDB connection string (default: $ENV_DATABASE_URL)"
+            echo "  -db, --database    MongoDB connection string (default: mongodb+srv://admin:[password]/dbname)"
             echo "  -h, --help         Show this help message"
             echo ""
             echo "Examples:"
@@ -69,34 +69,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ==========================================
-# Uninstallation
-# ==========================================
-if [ "$UNINSTALL" = true ]; then
-    print_warning "⚠️  Starting Uninstallation..."
-    
-    # Stop and disable all worker services
-    print_status "Stopping and disabling worker services..."
-    systemctl stop "${APP_NAME}@*" 2>/dev/null || true
-    systemctl disable "${APP_NAME}@*" 2>/dev/null || true
-    systemctl stop $APP_NAME 2>/dev/null || true
-    
-    # Remove systemd service file
-    if [ -f "/etc/systemd/system/${APP_NAME}@.service" ]; then
-        print_status "Removing systemd service template file..."
-        rm "/etc/systemd/system/${APP_NAME}@.service"
-        systemctl daemon-reload
-    fi
-    
-    # Remove application directory
-    if [ -d "$APP_DIR" ]; then
-        print_status "Removing application directory ($APP_DIR)..."
-        rm -rf "$APP_DIR"
-    fi
-    
-    print_status "✅ Uninstallation completed successfully!"
-    exit 0
-fi
+# Functions
+print_status() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
 
 # Functions
 print_status() {
@@ -110,6 +94,47 @@ print_warning() {
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
+
+# ==========================================
+# Uninstallation
+# ==========================================
+if [ "$UNINSTALL" = true ]; then
+     print_warning "⚠️  Starting Uninstallation..."
+    
+    # Stop and disable all worker instances
+    print_status "Stopping and disabling services..."
+    for i in $(seq 1 20); do
+        systemctl stop "${SERVICE_NAME}@${i}" 2>/dev/null || true
+        systemctl disable "${SERVICE_NAME}@${i}" 2>/dev/null || true
+    done
+    
+    # Also stop single instance service if exists
+    systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+    systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
+    
+    # Remove systemd service template
+    if [ -f "/etc/systemd/system/${SERVICE_NAME}@.service" ]; then
+        print_status "Removing systemd service template..."
+        rm "/etc/systemd/system/${SERVICE_NAME}@.service"
+    fi
+    
+    # Remove single instance service if exists
+    if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]; then
+        print_status "Removing systemd service file..."
+        rm "/etc/systemd/system/${SERVICE_NAME}.service"
+    fi
+    
+    systemctl daemon-reload
+    
+    # Remove application directory
+    if [ -d "$APP_DIR" ]; then
+        print_status "Removing application directory..."
+        rm -rf "$APP_DIR"
+    fi
+    
+    print_status "✅ Uninstallation completed successfully!"
+    exit 0
+fi
 
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
@@ -168,7 +193,7 @@ print_status "Execution permissions set."
 # Create .env file
 print_status "Creating .env file..."
 cat <<EOF > .env
-MONGODB_URI=$ENV_DATABASE_URL
+MONGODB_URI=$DATABASE_URL
 EOF
 print_status ".env file created successfully."
 
