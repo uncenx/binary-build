@@ -15,7 +15,7 @@ Customize the `--domain` and `--port` parameters as needed:
 curl -fsSL https://raw.githubusercontent.com/uncenx/binary-build/refs/heads/master/scraper-api/install.sh | sudo -E bash -s -- \
     --app \
     --nginx \
-    --domain ibucket.org \
+    --domain scraper.uncenx.com \
     --port 8084
 ```
 
