@@ -212,7 +212,7 @@ ExecStart=$APP_DIR/$APP_NAME
 Restart=always
 RestartSec=5
 EnvironmentFile=$APP_DIR/.env
-Environment="WORKER_ID=scraper-worker-%i"
+Environment="WORKER_ID=$(hostname)-scraper-%i"
 
 [Install]
 WantedBy=multi-user.target
