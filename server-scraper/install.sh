@@ -148,8 +148,8 @@ print_status "Installing with $WORKER_COUNT worker(s)..."
 print_status "Updating system packages..."
 if command -v apt-get &> /dev/null; then
     apt-get update
-    print_status "Installing dependencies (curl, jq)..."
-    apt-get install -y curl jq
+    print_status "Installing dependencies (curl, jq, chromium-browser)..."
+    apt-get install -y curl jq chromium-browser
 fi
 
 # Check if required commands exist
