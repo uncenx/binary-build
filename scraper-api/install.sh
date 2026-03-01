@@ -130,6 +130,14 @@ print_status "🚀 Starting Installation..."
 print_status "Components: App=$INSTALL_APP, Nginx=$INSTALL_NGINX"
 print_status "Configuration: Port=$HTTP_PORT, Domain=$DOMAIN"
 
+# Update and install dependencies
+print_status "Updating system packages..."
+if command -v apt-get &> /dev/null; then
+    apt-get update
+    print_status "Installing dependencies (curl, jq, chromium-browser)..."
+    apt-get install -y curl jq chromium-browser
+fi
+
 # ==========================================
 # Application Installation
 # ==========================================
