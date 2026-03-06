@@ -8,6 +8,7 @@ set -euo pipefail
 SERVER_PORT="${SERVER_PORT:-8889}"
 SEGMENT_DUR="${SEGMENT_DUR:-6}"
 MEDIA_ROOT="${MEDIA_ROOT:-/home/files}"
+SEGMENT_DUR_MS=$((SEGMENT_DUR * 1000))
 
 # ====================== Helpers =========================
 log(){ printf "\n\033[1;32m[INFO]\033[0m %s\n" "$*"; }
@@ -20,7 +21,7 @@ need_root
 
 log "Installing dependencies..."
 apt update
-DEBIAN_FRONTEND=noninteractive apt -y install \
+DEBIAN_FRONTEND=noninteractive apt -y --no-install-recommends install \
   build-essential git curl ca-certificates \
   nginx \
   libpcre2-dev zlib1g-dev libssl-dev \
@@ -57,18 +58,18 @@ cd nginx-vod-module
 # Backup original
 cp ngx_child_http_request.c ngx_child_http_request.c.orig
 
-# Fix line ~140 in ngx_child_request_wev_handler: if (u == NULL) -> if (u == NULL && sr->out == NULL)
-sed -i '140s/if (u == NULL)/if (u == NULL \&\& sr->out == NULL)/' ngx_child_http_request.c
+# Fix in ngx_child_request_wev_handler: if (u == NULL) -> if (u == NULL && sr->out == NULL)
+sed -i '/ngx_child_request_wev_handler/,/^}/ s/if (u == NULL)/if (u == NULL \&\& sr->out == NULL)/' ngx_child_http_request.c
 
-# Fix line ~335 in ngx_child_request_initial_wev_handler: if (u == NULL) -> if (u == NULL && r->out == NULL)
-sed -i '335s/if (u == NULL)/if (u == NULL \&\& r->out == NULL)/' ngx_child_http_request.c
+# Fix in ngx_child_request_initial_wev_handler: if (u == NULL) -> if (u == NULL && r->out == NULL)
+sed -i '/ngx_child_request_initial_wev_handler/,/^}/ s/if (u == NULL)/if (u == NULL \&\& r->out == NULL)/' ngx_child_http_request.c
 
 # Verify patches
 if ! grep -q "sr->out == NULL" ngx_child_http_request.c; then
-  err "Patch 1 failed - could not apply fix for line 140"
+  err "Patch 1 failed - could not apply fix for ngx_child_request_wev_handler"
 fi
 if ! grep -q "r->out == NULL" ngx_child_http_request.c; then
-  err "Patch 2 failed - could not apply fix for line 335"
+  err "Patch 2 failed - could not apply fix for ngx_child_request_initial_wev_handler"
 fi
 log "Patches applied successfully"
 
@@ -135,7 +136,7 @@ http {
   # Support for large files (12-20GB, 12+ hours)
   vod_max_frame_count 5000000;
 
-  vod_segment_duration 4000;
+  vod_segment_duration __SEGMENT_DUR_MS__;
   vod_manifest_segment_durations_mode accurate;
   vod_segment_count_policy last_rounded;
   
@@ -154,12 +155,15 @@ http {
 }
 NGX
 
+# Apply variable substitutions to nginx.conf
+sed -i "s/__SEGMENT_DUR_MS__/${SEGMENT_DUR_MS}/" /etc/nginx/nginx.conf
+
 # Write vod.conf (mapped mode with local files)
 log "Writing /etc/nginx/conf.d/vod.conf..."
 cat >/etc/nginx/conf.d/vod.conf <<'NGX'
 upstream jsonserver {
   server 127.0.0.1:8888;
-  keepalive 16;
+  keepalive 32;
 }
 
 server {
@@ -171,10 +175,15 @@ server {
   vod_upstream_location /json;
 
   # mapping cache (specific to this server)
-  vod_mapping_cache mapping_cache 256m;
+  vod_mapping_cache mapping_cache 512m;
   
-  # Support for large files (12-20GB, 12 hours)
-  vod_max_mapping_response_size 128m;
+  # NOTE: response_cache and metadata_cache are already defined in nginx.conf
+  # Do NOT redefine them here
+  
+  vod_max_mapping_response_size 16m;
+  
+  # IMPORTANT: Increase buffer for upstream response headers
+  vod_max_upstream_headers_size 8k;
 
   # gzip manifests
   gzip on;
@@ -186,7 +195,6 @@ server {
   open_file_cache_min_uses 1;
   open_file_cache_errors on;
   
-  # Client settings for large files
   client_body_buffer_size 256k;
   client_max_body_size 500m;
   client_body_timeout 90s;
@@ -195,121 +203,75 @@ server {
     return 200 "ok\n";
   }
 
-  # JSON mapping - read JSON from local server
-  # When vod_mode is mapped, nginx-vod will request: /json/{protocol}/filename.json
-  # We proxy to jsonserver which serves from ${MEDIA_ROOT}
-  # Works for HLS, DASH, and Thumbnail
+  # JSON mapping - /json/{protocol}/file.json -> localhost:8888/file.json
   location ^~ /json/ {
-    internal;
+    # internal; # Uncomment for production security
+    
     rewrite ^/json/[^/]+/(.*)$ /$1 break;
+    
     proxy_pass http://jsonserver;
     proxy_http_version 1.1;
-    proxy_set_header Host \$http_host;
     proxy_set_header Connection "";
+    proxy_set_header Host 127.0.0.1;
     
-    # Timeouts and buffers for large files (12-20GB)
-    proxy_connect_timeout 60s;
-    proxy_send_timeout 90s;
-    proxy_read_timeout 90s;
+    proxy_connect_timeout 10s;
+    proxy_send_timeout 10s;
+    proxy_read_timeout 10s;
+    
     proxy_buffer_size 128k;
     proxy_buffers 16 128k;
     proxy_busy_buffers_size 256k;
   }
 
-  # HLS streaming with local files
+  # HLS streaming against local files (mapped via JSON)
   location /hls/ {
     vod hls;
     vod_hls_output_iframes_playlist off;
-    vod_force_continuous_timestamps on;
-    vod_ignore_edit_list on;
     
     add_header Access-Control-Allow-Headers '*';
     add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range';
     add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
     add_header Access-Control-Allow-Origin '*';
     
-    # Playlists (.m3u8) - cache short time
     location ~ \.m3u8$ {
       vod hls;
       vod_hls_output_iframes_playlist off;
-      vod_force_continuous_timestamps on;
-      vod_ignore_edit_list on;
       add_header Cache-Control "public, max-age=3600" always;
       add_header Access-Control-Allow-Origin '*' always;
       expires 1h;
     }
     
-    # Segments (.ts) - cache long time
     location ~ \.ts$ {
       vod hls;
-      vod_force_continuous_timestamps on;
-      vod_ignore_edit_list on;
       add_header Cache-Control "public, max-age=31536000, immutable" always;
       add_header Access-Control-Allow-Origin '*' always;
       expires 1y;
     }
     
-    # Default for other files
     expires 1h;
   }
 
-  # DASH streaming with local files
+  # DASH streaming
   location /dash/ {
     vod dash;
-    vod_force_continuous_timestamps on;
-    vod_ignore_edit_list on;
     
     add_header Access-Control-Allow-Headers '*';
     add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range';
     add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
     add_header Access-Control-Allow-Origin '*';
     
-    # Manifests (.mpd) - cache short time
-    location ~ \.mpd$ {
-      vod dash;
-      vod_force_continuous_timestamps on;
-      vod_ignore_edit_list on;
-      add_header Cache-Control "public, max-age=3600" always;
-      add_header Access-Control-Allow-Origin '*' always;
-      expires 1h;
-    }
-    
-    # Init segments (.mp4, .m4s with init) - cache long time
-    location ~ ^/dash/.*/init.*\.m[p4][4s]$ {
-      vod dash;
-      vod_force_continuous_timestamps on;
-      vod_ignore_edit_list on;
-      add_header Cache-Control "public, max-age=31536000, immutable" always;
-      add_header Access-Control-Allow-Origin '*' always;
-      expires 1y;
-    }
-    
-    # Media segments (.m4s) - cache long time
-    location ~ \.m4s$ {
-      vod dash;
-      vod_force_continuous_timestamps on;
-      vod_ignore_edit_list on;
-      add_header Cache-Control "public, max-age=31536000, immutable" always;
-      add_header Access-Control-Allow-Origin '*' always;
-      expires 1y;
-    }
-    
-    # Default for other files
     expires 1h;
   }
 
-  # Thumbnail capture with mapped mode
+  # Thumbnail capture
   location /thumb/ {
     vod thumb;
-    vod_force_continuous_timestamps on;
-    vod_ignore_edit_list on;
     
     add_header Access-Control-Allow-Headers '*' always;
     add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS' always;
     add_header Access-Control-Allow-Origin '*' always;
     add_header Content-Type 'image/jpeg' always;
     
-    # Cache thumbnails for long time (they don't change)
     add_header Cache-Control "public, max-age=31536000, immutable" always;
     expires 1y;
     
@@ -328,31 +290,11 @@ server {
 }
 NGX
 
+# Apply variable substitutions to vod.conf
+sed -i "s/listen 8889;/listen ${SERVER_PORT};/" /etc/nginx/conf.d/vod.conf
+
 log "Writing /etc/nginx/conf.d/local.conf..."
 cat >/etc/nginx/conf.d/local.conf <<'NGX'
-# JSON mapping server and proxy to VOD server
-
-# server {
-#   listen 8888;
-#   server_name _;
-  
-#   root /home/files;
-
-#   add_header Access-Control-Allow-Origin * always;
-
-#   # Serve JSON mapping files
-#   location / {
-#     autoindex on;
-#   }
-
-#   location = /healthz {
-#     return 200 "ok\n";
-#   }
-
-#   access_log /var/log/nginx/local.log;
-#   error_log /var/log/nginx/local-error.log warn;
-# }
-
 # Public proxy server (port 80)
 server {
   listen 80;
@@ -520,8 +462,7 @@ server {
     add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range' always;
     
     # Rewrite URLs in playlist from /hls/file.json/ to /file/
-    sub_filter_types application/vnd.apple.mpegurl;
-    sub_filter_types text/plain;
+    sub_filter_types application/vnd.apple.mpegurl text/plain;
     sub_filter '/hls/' '/';
     sub_filter '.json/index-v1-a1.m3u8' '/video.m3u8';
     sub_filter_once off;
@@ -564,8 +505,7 @@ server {
     add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range' always;
     
     # Rewrite segment URLs from /hls/file.json/seg-1-v1-a1.ts to /file/v-1.jpeg
-    sub_filter_types application/vnd.apple.mpegurl;
-    sub_filter_types text/plain;
+    sub_filter_types application/vnd.apple.mpegurl text/plain;
     sub_filter '/hls/' '/';
     sub_filter '.json/seg-' '/v-';
     sub_filter '-v1-a1.ts' '.jpeg';
@@ -624,7 +564,7 @@ server {
     server_tokens off;
   }
 
-  # Pattern 8: Thumbnail with time parameter
+  # Pattern 7: Thumbnail with time parameter
   # /thumb/xxx-30.jpg -> /thumb/xxx.json/thumb-30000.jpg (30 seconds = 30000ms)
   location ~ ^/thumb/([^/]+)-(\d+)\.jpg$ {
     # Handle OPTIONS
@@ -639,8 +579,8 @@ server {
     }
     
     # Convert seconds to milliseconds
-    set $time_ms $2;
-    set $time_ms "${time_ms}000";
+    set $time_sec $2;
+    set $time_ms "${time_sec}000";
     
     proxy_http_version 1.1;
     proxy_set_header Connection "";
@@ -661,7 +601,7 @@ server {
     add_header Cache-Control 'public, max-age=31536000, immutable' always;
   }
 
-  # Pattern 9: Thumbnail without time parameter (default to 1 second)
+  # Pattern 8: Thumbnail without time parameter (default to 1 second)
   # /thumb/xxx.jpg -> /thumb/xxx.json/thumb-1000.jpg
   location ~ ^/thumb/([^/]+)\.jpg$ {
     # Handle OPTIONS
@@ -694,7 +634,7 @@ server {
     add_header Cache-Control 'public, max-age=31536000, immutable' always;
   }
 
-  # Pattern 7: Catch-all for other files (MUST be AFTER Pattern 8, 9)
+  # Pattern 9: Catch-all for other files (MUST be AFTER thumbnail patterns)
   # /test/anything -> /hls/test.json/anything
   location ~ ^/([^/]+)/(.*)$ {
     # Handle OPTIONS
@@ -732,8 +672,7 @@ server {
     add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range' always;
     
     # Rewrite URLs in playlists: /hls/anything.json/ -> /anything/
-    sub_filter_types application/vnd.apple.mpegurl;
-    sub_filter_types text/plain;
+    sub_filter_types application/vnd.apple.mpegurl text/plain;
     sub_filter '/hls/' '/';
     sub_filter '.json/' '/';
     sub_filter 'seg-' 'v-';
@@ -750,6 +689,9 @@ server {
 }
 NGX
 
+# Apply variable substitutions to local.conf
+sed -i "s|127.0.0.1:8889|127.0.0.1:${SERVER_PORT}|g" /etc/nginx/conf.d/local.conf
+
 # Test and restart
 log "Testing nginx configuration..."
 nginx -t
@@ -757,6 +699,10 @@ nginx -t
 log "Restarting nginx..."
 systemctl enable nginx
 systemctl restart nginx
+
+# Cleanup build artifacts
+log "Cleaning up build directory..."
+rm -rf "${WORKDIR}"
 
 log "Installation complete!"
 log ""
