@@ -112,3 +112,8 @@ To completely remove all workers, the application directory, and the systemd ser
 ```bash
 curl -fsSL https://raw.githubusercontent.com/uncenx/binary-build/refs/heads/master/server-download/install.sh | sudo -E bash -s -- --uninstall
 ```
+
+To cleanup all files:
+```bash
+cd /opt/server-download && ./server-download --cleanup
+```
