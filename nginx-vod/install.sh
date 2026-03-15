@@ -124,7 +124,7 @@ http {
 
   # VOD global settings
   aio threads;
-  vod_initial_read_size 16m;
+  vod_initial_read_size 64m;
   vod_max_metadata_size 512m;
   vod_metadata_cache metadata_cache 2048m;
   vod_response_cache response_cache 512m;

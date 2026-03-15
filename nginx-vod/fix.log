@@ -1,0 +1,2 @@
+sed -i 's/vod_initial_read_size 16m;/vod_initial_read_size 64m;/' /etc/nginx/nginx.conf
+nginx -t && systemctl reload nginx
