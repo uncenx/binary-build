@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Server Player Installation Script
+# Server CCU Installation Script
 
 set -e
 
@@ -11,15 +11,15 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default values
-HTTP_PORT="8081"
-DOMAIN="v2.ibucket.org"
+HTTP_PORT="8085"
+DOMAIN="ccu.uncenxcdn.com"
 MONGODB_URI=""
-CCU_WS_URL=""
+ALLOWED_ORIGINS="*"
 INSTALL_APP=false   
 INSTALL_NGINX=false
 UNINSTALL=false
 
-URL_BASE="https://raw.githubusercontent.com/uncenx/binary-build/refs/heads/master/server-player"
+URL_BASE="https://raw.githubusercontent.com/uncenx/binary-build/refs/heads/master/server-ccu"
 
 # Functions
 print_status() {
@@ -61,25 +61,25 @@ while [[ $# -gt 0 ]]; do
             MONGODB_URI="$2"
             shift 2
             ;;
-        --ccu-ws-url)
-            CCU_WS_URL="$2"
+        --allowed-origins)
+            ALLOWED_ORIGINS="$2"
             shift 2
             ;;
         -h|--help)
-            echo "Server Player Installer"
+            echo "Server CCU Installer"
             echo ""
             echo "Usage: sudo ./install.sh [OPTIONS]"
             echo ""
             echo "Components (if none specified, both are installed):"
             echo "  --app              Install/Update Application only"
             echo "  --nginx            Install/Update Nginx config only"
-            echo "  --uninstall        Uninstall Server Player completely"
+            echo "  --uninstall        Uninstall Server CCU completely"
             echo ""
             echo "Configuration:"
-            echo "  -p, --port PORT          HTTP port (default: 8081)"
-            echo "  -d, --domain DOM         Domain name (default: v2.ibucket.org)"
+            echo "  -p, --port PORT          HTTP port (default: 8085)"
+            echo "  -d, --domain DOM         Domain name (default: ccu.uncenxcdn.com)"
             echo "  --mongodb-uri URI        MongoDB connection URI"
-            echo "  --ccu-ws-url URL         CCU WebSocket URL"
+            echo "  --allowed-origins ORI    Allowed CORS origins (default: *)"
             echo "  -h, --help               Show this help message"
             exit 0
             ;;
@@ -96,7 +96,7 @@ done
 if [ "$UNINSTALL" = true ]; then
     print_warning "⚠️  Starting Uninstallation..."
     
-    APP_NAME="server-player"
+    APP_NAME="server-ccu"
     
     # Stop and disable service
     print_status "Stopping and disabling service..."
@@ -156,7 +156,7 @@ fi
 if [ "$INSTALL_APP" = true ]; then
     print_status "📦 Installing Application..."
 
-    APP_NAME="server-player"
+    APP_NAME="server-ccu"
     APP_DIR="/opt/$APP_NAME"
     SERVICE_USER="root"
 
@@ -171,9 +171,9 @@ if [ "$INSTALL_APP" = true ]; then
     # Determine architecture
     ARCH=$(uname -m)
     if [ "$ARCH" = "x86_64" ]; then
-        BINARY="server-player-linux"
+        BINARY="server-ccu-linux"
     elif [ "$ARCH" = "aarch64" ]; then
-        BINARY="server-player-linux-arm64"
+        BINARY="server-ccu-linux-arm64"
     else
         print_error "Unsupported architecture: $ARCH"
         exit 1
@@ -188,10 +188,10 @@ if [ "$INSTALL_APP" = true ]; then
     if [ ! -f "$APP_DIR/.env" ]; then
         print_status "Creating configuration..."
         cat > "$APP_DIR/.env" << EOF
-# Server Player Configuration
-MONGODB_URI=$MONGODB_URI
+# Server CCU Configuration
 HTTP_PORT=$HTTP_PORT
-CCU_WS_URL="$CCU_WS_URL"
+ALLOWED_ORIGINS=$ALLOWED_ORIGINS
+MONGODB_URI=$MONGODB_URI
 EOF
         if [ -z "$MONGODB_URI" ]; then
             print_warning "⚠️  Please edit $APP_DIR/.env and set MONGODB_URI"
@@ -204,7 +204,7 @@ EOF
     print_status "Creating systemd service..."
     cat > /etc/systemd/system/$APP_NAME.service << EOF
 [Unit]
-Description=Server Player
+Description=Server CCU
 After=network.target
 
 [Service]
@@ -245,7 +245,7 @@ fi
 if [ "$INSTALL_NGINX" = true ]; then
     print_status "🔧 Installing/Configuring Nginx..."
 
-    APP_NAME="server-player"
+    APP_NAME="server-ccu"
 
     # Check Nginx installation
     if ! command -v nginx &> /dev/null; then
