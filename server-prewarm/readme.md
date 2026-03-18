@@ -14,6 +14,7 @@ Customize the parameters as needed:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/uncenx/binary-build/refs/heads/master/server-prewarm/install.sh | sudo -E bash -s -- \
     --app \
+    --pop fra \
     --storage-id 3b5a7630-479f-4877-b907-489fe0ff75c5 \
     --mongodb-uri "mongodb+srv://user:pass@host/dbname"
 ```
@@ -35,7 +36,7 @@ sudo ./install.sh
 ### Custom Configuration
 Specify custom settings during installation:
 ```bash
-sudo ./install.sh --port 8886 --domain v2.ibucket.org \
+sudo ./install.sh --port 8886 --domain v2.ibucket.org --pop sin \
     --storage-id "your-storage-id" \
     --mongodb-uri "mongodb+srv://user:pass@host/dbname"
 ```

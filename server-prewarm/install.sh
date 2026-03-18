@@ -15,6 +15,8 @@ HTTP_PORT="8886"
 DOMAIN="v2.ibucket.org"
 MONGODB_URI=""
 STORAGE_ID=""
+PREWARM_POP="fra"
+APP_NAME="server-prewarm"
 MAX_CONCURRENT="2"
 PARALLEL="10"
 INSTALL_APP=false
@@ -75,6 +77,14 @@ while [[ $# -gt 0 ]]; do
             PARALLEL="$2"
             shift 2
             ;;
+        --pop)
+            PREWARM_POP="$2"
+            shift 2
+            ;;
+        --name)
+            APP_NAME="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Server Prewarm Installer"
             echo ""
@@ -90,6 +100,8 @@ while [[ $# -gt 0 ]]; do
             echo "  -d, --domain DOM         Domain name (default: v2.ibucket.org)"
             echo "  --mongodb-uri URI        MongoDB connection URI"
             echo "  --storage-id ID          Storage ID for prewarm"
+            echo "  --pop POP                POP identifier, e.g. fra, sin, bkk (default: fra)"
+            echo "  --name NAME              Service name (default: server-prewarm)"
             echo "  --max-concurrent N       Max concurrent jobs (default: 2)"
             echo "  --parallel N             Parallel requests (default: 10)"
             echo "  -h, --help               Show this help message"
@@ -106,12 +118,10 @@ done
 # Uninstallation
 # ==========================================
 if [ "$UNINSTALL" = true ]; then
-    print_warning "⚠️  Starting Uninstallation..."
-    
-    APP_NAME="server-prewarm"
+    print_warning "⚠️  Starting Uninstallation of $APP_NAME..."
     
     # Stop and disable service
-    print_status "Stopping and disabling service..."
+    print_status "Stopping and disabling $APP_NAME service..."
     systemctl stop $APP_NAME 2>/dev/null || true
     systemctl disable $APP_NAME 2>/dev/null || true
     
@@ -151,8 +161,9 @@ if [ "$INSTALL_APP" = false ] && [ "$INSTALL_NGINX" = false ]; then
 fi
 
 print_status "🚀 Starting Installation..."
+print_status "Service: $APP_NAME"
 print_status "Components: App=$INSTALL_APP, Nginx=$INSTALL_NGINX"
-print_status "Configuration: Port=$HTTP_PORT, Domain=$DOMAIN"
+print_status "Configuration: Port=$HTTP_PORT, Domain=$DOMAIN, POP=$PREWARM_POP"
 
 # Update and install dependencies
 print_status "Updating system packages..."
@@ -166,9 +177,8 @@ fi
 # Application Installation
 # ==========================================
 if [ "$INSTALL_APP" = true ]; then
-    print_status "📦 Installing Application..."
+    print_status "📦 Installing Application ($APP_NAME)..."
 
-    APP_NAME="server-prewarm"
     APP_DIR="/opt/$APP_NAME"
     SERVICE_USER="root"
 
@@ -204,6 +214,7 @@ if [ "$INSTALL_APP" = true ]; then
 MONGODB_URI=$MONGODB_URI
 STORAGE_ID=$STORAGE_ID
 HTTP_PORT=$HTTP_PORT
+PREWARM_POP=$PREWARM_POP
 MAX_CONCURRENT=$MAX_CONCURRENT
 PARALLEL=$PARALLEL
 EOF
@@ -262,7 +273,7 @@ fi
 if [ "$INSTALL_NGINX" = true ]; then
     print_status "🔧 Installing/Configuring Nginx..."
 
-    APP_NAME="server-prewarm"
+    APP_DIR="/opt/$APP_NAME"
 
     # Check Nginx installation
     if ! command -v nginx &> /dev/null; then
