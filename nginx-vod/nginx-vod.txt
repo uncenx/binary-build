@@ -1,0 +1,129 @@
+sudo tee /etc/nginx/conf.d/vod.conf > /dev/null <<'NGX'
+upstream jsonserver {
+  server 127.0.0.1:8888;
+  keepalive 32;
+}
+
+server {
+  listen 8889;
+  server_name _;
+
+  # vod mode configuration
+  vod_mode mapped;
+  vod_upstream_location /json;
+
+  # mapping cache (specific to this server)
+  vod_mapping_cache mapping_cache 512m;
+  
+  # NOTE: response_cache and metadata_cache are already defined in nginx.conf
+  # Do NOT redefine them here
+  
+  vod_max_mapping_response_size 16m;
+  
+  # IMPORTANT: Increase buffer for upstream response headers
+  vod_max_upstream_headers_size 8k;
+
+  # gzip manifests
+  gzip on;
+  gzip_types application/vnd.apple.mpegurl application/dash+xml;
+
+  # file handle caching
+  open_file_cache max=1000 inactive=5m;
+  open_file_cache_valid 2m;
+  open_file_cache_min_uses 1;
+  open_file_cache_errors on;
+  
+  client_body_buffer_size 256k;
+  client_max_body_size 500m;
+  client_body_timeout 90s;
+
+  location = /healthz {
+    return 200 "ok\n";
+  }
+
+  # JSON mapping - /json/{protocol}/file.json -> localhost:8888/file.json
+  location ^~ /json/ {
+    # internal; # Uncomment for production security
+    
+    rewrite ^/json/[^/]+/(.*)$ /$1 break;
+    
+    proxy_pass http://jsonserver;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host 127.0.0.1;
+    
+    proxy_connect_timeout 10s;
+    proxy_send_timeout 10s;
+    proxy_read_timeout 10s;
+    
+    proxy_buffer_size 128k;
+    proxy_buffers 16 128k;
+    proxy_busy_buffers_size 256k;
+  }
+
+  # HLS streaming against local files (mapped via JSON)
+  location /hls/ {
+    vod hls;
+    vod_hls_output_iframes_playlist off;
+    
+    add_header Access-Control-Allow-Headers '*';
+    add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range';
+    add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
+    add_header Access-Control-Allow-Origin '*';
+    
+    location ~ \.m3u8$ {
+      vod hls;
+      vod_hls_output_iframes_playlist off;
+      add_header Cache-Control "public, max-age=3600" always;
+      add_header Access-Control-Allow-Origin '*' always;
+      expires 1h;
+    }
+    
+    location ~ \.ts$ {
+      vod hls;
+      add_header Cache-Control "public, max-age=31536000, immutable" always;
+      add_header Access-Control-Allow-Origin '*' always;
+      expires 1y;
+    }
+    
+    expires 1h;
+  }
+
+  # DASH streaming
+  location /dash/ {
+    vod dash;
+    
+    add_header Access-Control-Allow-Headers '*';
+    add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range';
+    add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
+    add_header Access-Control-Allow-Origin '*';
+    
+    expires 1h;
+  }
+
+  # Thumbnail capture
+  location /thumb/ {
+    vod thumb;
+    
+    add_header Access-Control-Allow-Headers '*' always;
+    add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS' always;
+    add_header Access-Control-Allow-Origin '*' always;
+    add_header Content-Type 'image/jpeg' always;
+    
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    expires 1y;
+    
+    if ($request_method = OPTIONS) {
+      return 204;
+    }
+  }
+
+  location /vod_status {
+    vod_status;
+    access_log off;
+  }
+
+  access_log /var/log/nginx/access.log;
+  error_log /var/log/nginx/error.log info;
+}
+NGX

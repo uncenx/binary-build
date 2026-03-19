@@ -1,0 +1,19 @@
+grep 'vod_segment_duration' /etc/nginx/nginx.conf
+
+grep 'public_log' /etc/nginx/nginx.conf
+
+Clear Cache + Restart
+
+rm -rf /var/cache/nginx/vod/*
+nginx -t
+systemctl restart nginx
+
+
+# เช็ค vod_status — cache ควรเป็น 0
+curl http://127.0.0.1:8889/vod_status
+
+# ดู segment duration ใน playlist
+curl http://127.0.0.1:8889/hls/<ชื่อไฟล์>.json/index-v1-a1.m3u8 | head -20
+# #EXTINF: ควรจะประมาณ 2.xxx
+
+grep 'YVbeDy9EghL' tail -f /var/log/nginx/public.log
