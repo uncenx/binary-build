@@ -253,6 +253,11 @@ if [ "$INSTALL_NGINX" = true ]; then
 
     print_status "Configuring Nginx for $DOMAIN..."
     cat > /etc/nginx/sites-available/$APP_NAME << EOF
+map \$http_upgrade \$connection_upgrade {
+    default upgrade;
+    ''      '';
+}
+
 server {
     listen 80;
     server_name $DOMAIN;
@@ -263,11 +268,15 @@ server {
         proxy_pass http://localhost:$HTTP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+
+        proxy_buffering on;
+        proxy_buffer_size 128k;
+        proxy_buffers 8 128k;
     }
 }
 EOF
