@@ -96,17 +96,49 @@ if [[ -f /etc/nginx/conf.d/vod.conf ]]; then
   mv /etc/nginx/conf.d/vod.conf /etc/nginx/conf.d/vod.conf.disabled
 fi
 
-# Remove old dynamic module load directive (v2 remnant)
-if grep -q 'ngx_http_vod_module' /etc/nginx/nginx.conf 2>/dev/null; then
-  log "Removing old load_module directive..."
-  sed -i '/ngx_http_vod_module/d' /etc/nginx/nginx.conf
-fi
-
 # Clean up old .so module file
 if [[ -f /usr/lib/nginx/modules/ngx_http_vod_module.so ]]; then
   log "Removing old dynamic module .so..."
   rm -f /usr/lib/nginx/modules/ngx_http_vod_module.so
 fi
+
+# Rewrite system nginx.conf — remove all vod directives from v2
+log "Writing clean /etc/nginx/nginx.conf..."
+[[ -f /etc/nginx/nginx.conf ]] && \
+  cp /etc/nginx/nginx.conf "/etc/nginx/nginx.conf.bak.$(date +%Y%m%d%H%M%S)"
+
+cat >/etc/nginx/nginx.conf <<'NGX'
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log info;
+
+events {
+  worker_connections 4096;
+}
+
+http {
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+
+  sendfile on;
+  tcp_nopush on;
+  tcp_nodelay on;
+  keepalive_timeout 60;
+
+  gzip on;
+  gzip_types application/vnd.apple.mpegurl application/dash+xml text/xml text/vtt application/json;
+
+  resolver 1.1.1.1 1.0.0.1 valid=300s;
+  resolver_timeout 5s;
+
+  log_format public_log '$remote_addr "$request" $status $body_bytes_sent '
+                        '"$http_referer" "$http_user_agent"';
+  access_log /var/log/nginx/access.log public_log;
+
+  include /etc/nginx/conf.d/*.conf;
+}
+NGX
 
 systemctl restart nginx 2>/dev/null || true
 
