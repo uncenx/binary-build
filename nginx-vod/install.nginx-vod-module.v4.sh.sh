@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# v4: Install nginx-vod-module — nginx 1.26.3 from source + static module
+# v3: Install nginx-vod-module — nginx 1.26.3 from source + static module
 # Fixes: FFmpeg 6.x crash, "upstream is null" crash, ABI mismatch
 # Tested on Ubuntu 24.04
 set -euo pipefail
 
 # ===================== Configuration =====================
 SERVER_PORT="${SERVER_PORT:-8889}"
-SEGMENT_DUR="${SEGMENT_DUR:-2}"
+SEGMENT_DUR="${SEGMENT_DUR:-4000}"
 MEDIA_ROOT="${MEDIA_ROOT:-/home/files}"
 NGX_VERSION="1.26.3"
 INSTALL_PREFIX="/opt/nginx-vod"
-SEGMENT_DUR_MS=$((SEGMENT_DUR * 1000))
 
 # ====================== Helpers =========================
 log(){ printf "\n\033[1;32m[INFO]\033[0m %s\n" "$*"; }
@@ -48,10 +47,9 @@ git clone --depth=1 https://github.com/kaltura/nginx-vod-module.git
 
 # Hide FFmpeg headers to avoid linking (FFmpeg 6.x causes segfault)
 log "Hiding FFmpeg headers to prevent linking..."
-ARCH=$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || echo "x86_64-linux-gnu")
 for d in libavcodec libavformat libavutil libswscale libavfilter; do
-  [[ -d "/usr/include/${ARCH}/$d" ]] && \
-    mv "/usr/include/${ARCH}/$d" "/usr/include/${ARCH}/${d}.bak" || true
+  [[ -d "/usr/include/x86_64-linux-gnu/$d" ]] && \
+    mv "/usr/include/x86_64-linux-gnu/$d" "/usr/include/x86_64-linux-gnu/${d}.bak" || true
 done
 
 # Build nginx + vod module (STATIC, not dynamic)
@@ -76,8 +74,8 @@ make install
 # Restore FFmpeg headers
 log "Restoring FFmpeg headers..."
 for d in libavcodec libavformat libavutil libswscale libavfilter; do
-  [[ -d "/usr/include/${ARCH}/${d}.bak" ]] && \
-    mv "/usr/include/${ARCH}/${d}.bak" "/usr/include/${ARCH}/$d" || true
+  [[ -d "/usr/include/x86_64-linux-gnu/${d}.bak" ]] && \
+    mv "/usr/include/x86_64-linux-gnu/${d}.bak" "/usr/include/x86_64-linux-gnu/$d" || true
 done
 
 [[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "Build failed"
@@ -86,29 +84,17 @@ ${INSTALL_PREFIX}/sbin/nginx -V 2>&1 | head -3
 
 # Prepare directories
 log "Preparing directories..."
-install -d -o www-data -g www-data -m 0755 "${MEDIA_ROOT}"
-install -d -o www-data -g www-data -m 0755 /var/cache/nginx/vod
+install -d -m 0755 "${MEDIA_ROOT}"
+install -d -m 0755 /var/cache/nginx/vod
+chown -R www-data:www-data "${MEDIA_ROOT}" /var/cache/nginx/vod
 
-# =================== Clean up system nginx vod ===================
+# =================== Disable system nginx vod ===================
 # If system nginx has vod.conf, disable it to free port 8889
 if [[ -f /etc/nginx/conf.d/vod.conf ]]; then
   log "Disabling system nginx vod.conf..."
   mv /etc/nginx/conf.d/vod.conf /etc/nginx/conf.d/vod.conf.disabled
+  systemctl restart nginx 2>/dev/null || true
 fi
-
-# Remove old dynamic module load directive (v2 remnant)
-if grep -q 'ngx_http_vod_module' /etc/nginx/nginx.conf 2>/dev/null; then
-  log "Removing old load_module directive..."
-  sed -i '/ngx_http_vod_module/d' /etc/nginx/nginx.conf
-fi
-
-# Clean up old .so module file
-if [[ -f /usr/lib/nginx/modules/ngx_http_vod_module.so ]]; then
-  log "Removing old dynamic module .so..."
-  rm -f /usr/lib/nginx/modules/ngx_http_vod_module.so
-fi
-
-systemctl restart nginx 2>/dev/null || true
 
 # =================== Write VOD nginx config ===================
 log "Writing ${INSTALL_PREFIX}/conf/nginx.conf..."
@@ -147,7 +133,7 @@ http {
   # Support for large files (12-20GB, 12+ hours)
   vod_max_frame_count 5000000;
 
-  vod_segment_duration ${SEGMENT_DUR_MS};
+  vod_segment_duration ${SEGMENT_DUR};
   vod_manifest_segment_durations_mode accurate;
   vod_segment_count_policy last_rounded;
 
@@ -639,19 +625,12 @@ server {
 }
 NGX
 
-# Apply variable substitutions to local.conf
-sed -i "s|127.0.0.1:8889|127.0.0.1:${SERVER_PORT}|g" /etc/nginx/conf.d/local.conf
-
 # Test and restart system nginx
 log "Testing system nginx configuration..."
 nginx -t
 
 log "Restarting system nginx..."
 systemctl restart nginx
-
-# Cleanup build artifacts
-log "Cleaning up build directory..."
-rm -rf "${WORKDIR}"
 
 # =================== Final verification ===================
 log "Verifying services..."
